@@ -1,0 +1,20 @@
+{
+    "board_size": {
+        "description": "棋盘大小",
+        "type": "int",
+        "hint": "设置五子棋棋盘的大小，默认为15x15",
+        "default": 15
+    },
+    "join_timeout": {
+        "description": "等待加入超时时间（秒）",
+        "type": "int",
+        "hint": "等待其他玩家加入的超时时间，单位为秒",
+        "default": 120
+    },
+    "backup_interval": {
+        "description": "排行榜备份间隔时间（秒）",
+        "type": "int",
+        "hint": "排行榜数据备份的间隔时间，单位为秒",
+        "default": 3600
+    }
+}
