@@ -1121,7 +1121,7 @@ class WuziqiPlugin(Star):
             "- /结束下棋：结束当前游戏。\n"
             "- /强制结束游戏：管理员专用，强制结束当前游戏。\n\n"
             "【战绩查询】\n"
-            "- /排行榜：查看五子棋游戏排行榜（按胜场数排序）。\n"
+            "- /五子棋排行榜：查看五子棋游戏排行榜（按胜场数排序）。\n"
             "- /我的战绩：查看个人五子棋战绩。\n\n"
             "【游戏规则】\n"
             "- 棋盘为 15x15，黑棋先手，双方轮流落子。\n"
@@ -1131,7 +1131,7 @@ class WuziqiPlugin(Star):
         )
         yield event.plain_result(help_text)
 
-    @filter.command("排行榜")
+    @filter.command("五子棋排行榜")
     async def show_rankings(self, event: AstrMessageEvent):
         if not self.rankings:
             yield event.plain_result("排行榜为空，暂无玩家数据。")
