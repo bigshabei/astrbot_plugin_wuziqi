@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, List
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.message_components import Plain, Image
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, register, StarTools
+from astrbot.api import logger  # 使用 AstrBot 提供的 logger 接口
 from astrbot.api import AstrBotConfig
 from PIL import Image as PILImage, ImageDraw, ImageFont
 import numpy as np
@@ -24,8 +25,9 @@ class WuziqiPlugin(Star):
         self.board_size = config.get('board_size', 15) if config else 15
         self.join_timeout = config.get('join_timeout', 120) if config else 120
         self.backup_interval = config.get('backup_interval', 3600) if config else 3600
-        # 存储路径与插件名一致
-        self.data_path = Path("data/plugins_data/astrbot_plugin_wuziqi")
+        # 使用 StarTools 获取数据存储路径
+        self.data_path = StarTools.get_data_dir("astrbot_plugin_wuziqi")
+        logger.info(f"五子棋插件数据存储路径: {self.data_path}")
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.rank_file = self.data_path / "rankings.json"
         self.rank_backup_file = self.data_path / "rankings_backup.json"
@@ -43,7 +45,7 @@ class WuziqiPlugin(Star):
                 with open(self.rank_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception as e:
-                print(f"加载排行榜数据时出错: {e}")
+                logger.error(f"加载排行榜数据时出错: {e}")
                 return {}
         return {}
 
@@ -55,16 +57,17 @@ class WuziqiPlugin(Star):
             if current_time - self.last_backup_time >= self.backup_interval:
                 self._backup_rankings()
                 self.last_backup_time = current_time
+            logger.info("排行榜数据已成功保存")
         except Exception as e:
-            print(f"保存排行榜数据时出错: {e}")
+            logger.error(f"保存排行榜数据时出错: {e}")
 
     def _backup_rankings(self):
         try:
             with open(self.rank_backup_file, 'w', encoding='utf-8') as f:
                 json.dump(self.rankings, f, ensure_ascii=False, indent=2)
-            print(f"排行榜数据已备份到 {self.rank_backup_file}")
+            logger.info(f"排行榜数据已备份到 {self.rank_backup_file}")
         except Exception as e:
-            print(f"备份排行榜数据时出错: {e}")
+            logger.error(f"备份排行榜数据时出错: {e}")
 
     def _update_rankings(self, winner_id: str, winner_name: str, loser_id: str, loser_name: str):
         if winner_id != "AI":
@@ -75,6 +78,7 @@ class WuziqiPlugin(Star):
             if loser_id not in self.rankings:
                 self.rankings[loser_id] = {"name": loser_name, "wins": 0, "losses": 0, "draws": 0}
             self.rankings[loser_id]["losses"] += 1
+        logger.info(f"更新排行榜: 胜者 {winner_name} (ID: {winner_id}), 败者 {loser_name} (ID: {loser_id})")
         self._save_rankings()
 
     def _update_draw_rankings(self, player1_id: str, player1_name: str, player2_id: str, player2_name: str):
@@ -86,6 +90,7 @@ class WuziqiPlugin(Star):
             if player2_id not in self.rankings:
                 self.rankings[player2_id] = {"name": player2_name, "wins": 0, "losses": 0, "draws": 0}
             self.rankings[player2_id]["draws"] += 1
+        logger.info(f"更新排行榜: 平局，玩家1 {player1_name} (ID: {player1_id}), 玩家2 {player2_name} (ID: {player2_id})")
         self._save_rankings()
 
     def _init_board(self) -> np.ndarray:
@@ -157,6 +162,7 @@ class WuziqiPlugin(Star):
 
         image_path = str(self.data_path / f"board_{session_id}.png")
         image.save(image_path)
+        logger.info(f"棋盘图片生成并保存至: {image_path}")
         return image_path
 
     def _get_system_font(self, size: int) -> ImageFont:
@@ -171,10 +177,11 @@ class WuziqiPlugin(Star):
                 font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
             return ImageFont.truetype(font_path, size)
         except Exception as e:
-            print(f"无法加载系统字体: {e}")
+            logger.error(f"无法加载系统字体: {e}")
             try:
                 return ImageFont.truetype("arial.ttf", size)
             except:
+                logger.warning("无法加载 Arial 字体，使用默认字体")
                 return ImageFont.load_default()
 
     def _draw_rankings_image(self, session_id: str = "default") -> str:
@@ -233,6 +240,7 @@ class WuziqiPlugin(Star):
 
         image_path = str(self.data_path / f"rankings_{session_id}.png")
         image.save(image_path)
+        logger.info(f"排行榜图片生成并保存至: {image_path}")
         return image_path
 
     def _parse_position(self, text: str) -> Optional[Tuple[int, int]]:
@@ -244,6 +252,7 @@ class WuziqiPlugin(Star):
             col = ord(letter) - ord('A')
             row = int(number) - 1
             return (row, col)
+        logger.warning(f"坐标解析失败: {text}")
         return None
 
     def _is_game_started(self, game: dict) -> bool:
@@ -414,6 +423,7 @@ class WuziqiPlugin(Star):
         if best_move is None and valid_moves:
             best_move = random.choice(valid_moves)[:2]
 
+        logger.info(f"AI 移动计算完成，会话 {session_id}，最佳移动: {best_move}")
         return best_move
 
     async def _handle_move(self, event: AstrMessageEvent, position: str, send_immediate: bool = True):
@@ -465,6 +475,7 @@ class WuziqiPlugin(Star):
             board_path = self._draw_board(game["board"], game["last_move"], session_id)
             player_name = "黑棋" if current_player == 1 else "白棋"
             human_move_message = f"{player_name} 落子于 {position.upper()}。"
+            logger.info(f"玩家 {player_data['name']} 落子于 {position.upper()}，会话 {session_id}")
 
             if send_immediate:
                 chain = [
@@ -478,14 +489,14 @@ class WuziqiPlugin(Star):
                 loser = game["players"][3 - current_player]
                 yield event.plain_result(f"游戏结束！{winner['name']} ({player_name}) 获胜！\n输家：{loser['name']} ({'白棋' if current_player == 1 else '黑棋'})")
                 self._update_rankings(winner['id'], winner['name'], loser['id'], loser['name'])
-                del self.games[session_id]
+                self._cleanup_game_state(session_id)
                 return
             elif self._check_draw(game["board"]):
                 black_player = game["players"][1]
                 white_player = game["players"][2]
                 yield event.plain_result(f"游戏结束！棋盘已满，双方平局！\n黑棋：{black_player['name']}\n白棋：{white_player['name']}")
                 self._update_draw_rankings(black_player['id'], black_player['name'], white_player['id'], white_player['name'])
-                del self.games[session_id]
+                self._cleanup_game_state(session_id)
                 return
 
             game["current_player"] = 3 - current_player
@@ -516,19 +527,43 @@ class WuziqiPlugin(Star):
                         loser = game["players"][3 - game["current_player"]]
                         yield event.plain_result(f"游戏结束！{winner['name']} ({ai_player_name}) 获胜！\n输家：{loser['name']} ({'白棋' if game['current_player'] == 1 else '黑棋'})")
                         self._update_rankings(winner['id'], winner['name'], loser['id'], loser['name'])
-                        del self.games[session_id]
+                        self._cleanup_game_state(session_id)
                         return
                     elif self._check_draw(game["board"]):
                         black_player = game["players"][1]
                         white_player = game["players"][2]
                         yield event.plain_result(f"游戏结束！棋盘已满，双方平局！\n黑棋：{black_player['name']}\n白棋：{white_player['name']}")
                         self._update_draw_rankings(black_player['id'], black_player['name'], white_player['id'], white_player['name'])
-                        del self.games[session_id]
+                        self._cleanup_game_state(session_id)
                         return
 
                     game["current_player"] = 3 - game["current_player"]
         except (ValueError, IndexError):
             yield event.plain_result("落子格式错误，请使用类似 'H7' 或 '落子 H7' 的格式。")
+
+    def _cleanup_game_state(self, session_id: str):
+        """清理与指定会话相关的所有游戏状态数据"""
+        if session_id in self.games:
+            del self.games[session_id]
+            logger.info(f"游戏状态已清理，会话: {session_id}")
+        if session_id in self.undo_stats:
+            del self.undo_stats[session_id]
+            logger.info(f"悔棋统计数据已清理，会话: {session_id}")
+        if session_id in self.wait_tasks:
+            task = self.wait_tasks[session_id]
+            task.cancel()
+            del self.wait_tasks[session_id]
+            logger.info(f"等待任务已取消并清理，会话: {session_id}")
+        if session_id in self.peace_requests:
+            if "timeout_task" in self.peace_requests[session_id]:
+                self.peace_requests[session_id]["timeout_task"].cancel()
+            del self.peace_requests[session_id]
+            logger.info(f"求和请求已清理，会话: {session_id}")
+        if session_id in self.undo_requests:
+            if "timeout_task" in self.undo_requests[session_id]:
+                self.undo_requests[session_id]["timeout_task"].cancel()
+            del self.undo_requests[session_id]
+            logger.info(f"悔棋请求已清理，会话: {session_id}")
 
     @filter.command("五子棋")
     async def start_game(self, event: AstrMessageEvent):
@@ -547,6 +582,7 @@ class WuziqiPlugin(Star):
             "history": []
         }
         self.undo_stats[session_id] = {}
+        logger.info(f"五子棋游戏开始，会话 {session_id}，发起者: {sender_name}")
         yield event.plain_result(f"五子棋游戏开始！{sender_name} 为黑棋（先手）。\n其他玩家可使用 '/加入五子棋' 加入游戏成为白棋。\n等待加入时间为 {self.join_timeout} 秒。\n发起者可使用 '/取消五子棋' 取消游戏，或使用 '/人机对战' 与 AI 对战。")
 
         task = asyncio.create_task(self._wait_for_join_timeout(session_id, event.unified_msg_origin))
@@ -556,25 +592,23 @@ class WuziqiPlugin(Star):
         await asyncio.sleep(self.join_timeout)
         if session_id in self.games and self.games[session_id]["players"][2] is None:
             await self.context.send_message(unified_msg_origin, f"等待玩家加入超时，未有白棋玩家加入，游戏结束。")
-            if session_id in self.games:
-                del self.games[session_id]
-            if session_id in self.wait_tasks:
-                del self.wait_tasks[session_id]
+            self._cleanup_game_state(session_id)
 
     @filter.command("人机对战")
     async def start_ai_game(self, event: AstrMessageEvent):
         session_id = event.session_id
+        # 只有在游戏存在且处于等待阶段（players[2] 为 None）时才响应
         if session_id not in self.games:
-            yield event.plain_result("当前群组没有正在进行的五子棋游戏，请先使用 '/五子棋' 命令开始游戏。")
+            logger.info(f"/人机对战 指令未触发，会话 {session_id}，原因：游戏未开始")
             return
 
         game = self.games[session_id]
         sender_id = event.get_sender_id()
-        if game["players"][1]["id"] != sender_id:
-            yield event.plain_result("只有游戏发起者可以选择与 AI 对战。")
-            return
         if game["players"][2] is not None:
-            yield event.plain_result("游戏已经开始，无法选择与 AI 对战。")
+            logger.info(f"/人机对战 指令未触发，会话 {session_id}，原因：游戏已开始或已有玩家加入")
+            return
+        if game["players"][1]["id"] != sender_id:
+            logger.info(f"/人机对战 指令未触发，会话 {session_id}，原因：非游戏发起者")
             return
 
         game["players"][2] = {"id": "AI", "name": "AI 玩家", "is_ai": True}
@@ -583,6 +617,7 @@ class WuziqiPlugin(Star):
             task.cancel()
             del self.wait_tasks[session_id]
 
+        logger.info(f"会话 {session_id} 开始与 AI 对战")
         yield event.plain_result(f"已选择与 AI 对战！游戏正式开始，轮到黑棋落子。")
         board_path = self._draw_board(game["board"], session_id=session_id)
         yield event.image_result(board_path)
@@ -603,12 +638,7 @@ class WuziqiPlugin(Star):
             yield event.plain_result("游戏已经开始，无法取消。请使用 '/结束下棋' 结束游戏。")
             return
 
-        if session_id in self.wait_tasks:
-            task = self.wait_tasks[session_id]
-            task.cancel()
-            del self.wait_tasks[session_id]
-
-        del self.games[session_id]
+        self._cleanup_game_state(session_id)
         yield event.plain_result("五子棋游戏已取消。")
 
     @filter.regex(r'^(加入五子棋|join gomoku)$', flags=re.IGNORECASE, priority=1)
@@ -635,6 +665,7 @@ class WuziqiPlugin(Star):
             task.cancel()
             del self.wait_tasks[session_id]
 
+        logger.info(f"玩家 {sender_name} 加入游戏，会话 {session_id}")
         yield event.plain_result(f"{sender_name} 加入游戏，成为白棋玩家！游戏正式开始，轮到黑棋落子。")
         board_path = self._draw_board(game["board"], session_id=session_id)
         yield event.image_result(board_path)
@@ -786,6 +817,7 @@ class WuziqiPlugin(Star):
                 Plain(f"悔棋成功，AI 已同意，撤销了{moves_to_undo}步棋，当前轮到 {player_name} 落子。"),
                 Image.fromFileSystem(board_path)
             ]
+            logger.info(f"AI 同意悔棋，撤销 {moves_to_undo} 步，会话 {session_id}")
             yield event.chain_result(chain)
         else:
             opponent_name = opponent_data["name"]
@@ -794,12 +826,14 @@ class WuziqiPlugin(Star):
                 "moves_to_undo": moves_to_undo,
                 "timeout_task": asyncio.create_task(self._undo_request_timeout(session_id, event.unified_msg_origin))
             }
+            logger.info(f"玩家 {proposer_name} 提出悔棋请求，会话 {session_id}")
             yield event.plain_result(f"{proposer_name} 提出悔棋请求！\n{opponent_name}，请在 30 秒内回复 '接受悔棋' 或 '拒绝悔棋' 以同意或拒绝悔棋请求。")
 
     async def _undo_request_timeout(self, session_id: str, unified_msg_origin):
         await asyncio.sleep(30)
         if session_id in self.undo_requests:
             del self.undo_requests[session_id]
+            logger.info(f"悔棋请求超时，会话 {session_id}")
             await self.context.send_message(unified_msg_origin, "悔棋请求超时，游戏继续。")
 
     @filter.regex(r'^(接受悔棋|accept undo)$', flags=re.IGNORECASE, priority=1)
@@ -867,6 +901,7 @@ class WuziqiPlugin(Star):
             Plain(f"悔棋请求被接受！撤销了{moves_to_undo}步棋，当前轮到 {player_name} ({proposer_name}) 落子。"),
             Image.fromFileSystem(board_path)
         ]
+        logger.info(f"悔棋请求被接受，撤销 {moves_to_undo} 步，会话 {session_id}")
         yield event.chain_result(chain)
 
     @filter.regex(r'^(拒绝悔棋|reject undo)$', flags=re.IGNORECASE, priority=1)
@@ -898,6 +933,7 @@ class WuziqiPlugin(Star):
         if session_id in self.undo_requests:
             del self.undo_requests[session_id]
 
+        logger.info(f"悔棋请求被拒绝，会话 {session_id}")
         yield event.plain_result("悔棋请求被拒绝，游戏继续。")
 
     @filter.command("查看棋局")
@@ -916,6 +952,7 @@ class WuziqiPlugin(Star):
         current_player = game["current_player"]
         player_data = game["players"][current_player]
         player_name = player_data["name"] if player_data else "未加入"
+        logger.info(f"玩家查看棋局，会话 {session_id}")
         yield event.plain_result(f"当前轮到 {'黑棋' if current_player == 1 else '白棋'} ({player_name}) 落子。")
         yield event.image_result(board_path)
 
@@ -945,9 +982,10 @@ class WuziqiPlugin(Star):
         player_name = "黑棋" if current_player == 1 else "白棋"
         loser = game["players"][current_player]
         winner = game["players"][3 - current_player]
+        logger.info(f"玩家 {loser['name']} 认输，会话 {session_id}")
         yield event.plain_result(f"{loser['name']} ({player_name}) 认输！游戏结束！\n胜者：{winner['name']} ({'白棋' if current_player == 1 else '黑棋'})")
         self._update_rankings(winner['id'], winner['name'], loser['id'], loser['name'])
-        del self.games[session_id]
+        self._cleanup_game_state(session_id)
 
     @filter.regex(r'^(求和|draw|peace)$', flags=re.IGNORECASE, priority=1)
     async def handle_peace_request(self, event: AstrMessageEvent):
@@ -989,7 +1027,7 @@ class WuziqiPlugin(Star):
                 white_player = game["players"][2]["name"]
                 yield event.plain_result(f"{proposer_name} 提出求和！\nAI 玩家已接受求和请求！游戏结束，双方平局！\n黑棋：{black_player}\n白棋：{white_player}")
                 self._update_draw_rankings(game["players"][1]["id"], black_player, game["players"][2]["id"], white_player)
-                del self.games[session_id]
+                self._cleanup_game_state(session_id)
             else:
                 yield event.plain_result(f"{proposer_name} 提出求和！\nAI 玩家已拒绝求和请求，游戏继续。")
             return
@@ -999,12 +1037,14 @@ class WuziqiPlugin(Star):
             "proposer": sender_id,
             "timeout_task": asyncio.create_task(self._peace_request_timeout(session_id, event.unified_msg_origin))
         }
+        logger.info(f"玩家 {proposer_name} 提出求和请求，会话 {session_id}")
         yield event.plain_result(f"{proposer_name} 提出求和！\n{opponent_name}，请在 30 秒内回复 '接受求和' 或 '拒绝求和' 以同意或拒绝求和请求。")
 
     async def _peace_request_timeout(self, session_id: str, unified_msg_origin):
         await asyncio.sleep(30)
         if session_id in self.peace_requests:
             del self.peace_requests[session_id]
+            logger.info(f"求和请求超时，会话 {session_id}")
             await self.context.send_message(unified_msg_origin, "求和请求超时，游戏继续。")
 
     @filter.regex(r'^(接受求和|accept draw|accept peace)$', flags=re.IGNORECASE, priority=1)
@@ -1038,9 +1078,10 @@ class WuziqiPlugin(Star):
 
         black_player = game["players"][1]
         white_player = game["players"][2]
+        logger.info(f"求和请求被接受，会话 {session_id}")
         yield event.plain_result(f"求和请求被接受！游戏结束，双方平局！\n黑棋：{black_player['name']}\n白棋：{white_player['name']}")
         self._update_draw_rankings(black_player['id'], black_player['name'], white_player['id'], white_player['name'])
-        del self.games[session_id]
+        self._cleanup_game_state(session_id)
 
     @filter.regex(r'^(拒绝求和|reject draw|reject peace)$', flags=re.IGNORECASE, priority=1)
     async def handle_reject_peace(self, event: AstrMessageEvent):
@@ -1071,6 +1112,7 @@ class WuziqiPlugin(Star):
         if session_id in self.peace_requests:
             del self.peace_requests[session_id]
 
+        logger.info(f"求和请求被拒绝，会话 {session_id}")
         yield event.plain_result("求和请求被拒绝，游戏继续。")
 
     @filter.command("结束下棋")
@@ -1085,7 +1127,7 @@ class WuziqiPlugin(Star):
         if not self._is_game_player(game, sender_id):
             return
 
-        del self.games[session_id]
+        self._cleanup_game_state(session_id)
         yield event.plain_result("五子棋游戏已结束。")
 
     @filter.command("强制结束游戏")
@@ -1096,7 +1138,7 @@ class WuziqiPlugin(Star):
             yield event.plain_result("当前群组没有正在进行的五子棋游戏。")
             return
 
-        del self.games[session_id]
+        self._cleanup_game_state(session_id)
         yield event.plain_result("管理员已强制结束五子棋游戏。")
 
     @filter.command("五子棋帮助")
@@ -1134,15 +1176,18 @@ class WuziqiPlugin(Star):
     @filter.command("五子棋排行榜")
     async def show_rankings(self, event: AstrMessageEvent):
         if not self.rankings:
-            yield event.plain_result("排行榜为空，暂无玩家数据。")
+            logger.info(f"排行榜查询失败，会话 {event.session_id}，原因：排行榜数据为空")
+            yield event.plain_result("暂无上榜玩家，请参与游戏后查看排行榜。")
             return
 
         session_id = event.session_id
+        logger.info(f"排行榜查询，会话 {session_id}，当前排行榜数据条目数: {len(self.rankings)}")
         image_path = self._draw_rankings_image(session_id)
         if image_path:
             yield event.image_result(image_path)
         else:
-            yield event.plain_result("排行榜为空，暂无玩家数据。")
+            logger.warning(f"排行榜图片生成失败，会话 {session_id}")
+            yield event.plain_result("暂无上榜玩家，请参与游戏后查看排行榜。")
 
     @filter.command("我的战绩")
     async def show_my_stats(self, event: AstrMessageEvent):
@@ -1166,20 +1211,22 @@ class WuziqiPlugin(Star):
         stats_text += f"总对局：{total_games} 局\n"
         stats_text += f"胜率：{win_rate:.2f}%"
 
+        logger.info(f"玩家 {data['name']} 查询个人战绩，会话 {event.session_id}")
         yield event.plain_result(stats_text)
 
     async def terminate(self):
         for task in self.wait_tasks.values():
             task.cancel()
-        self.games.clear()
-        self.wait_tasks.clear()
         for req in self.peace_requests.values():
             if "timeout_task" in req:
                 req["timeout_task"].cancel()
-        self.peace_requests.clear()
         for req in self.undo_requests.values():
             if "timeout_task" in req:
                 req["timeout_task"].cancel()
+        self.games.clear()
+        self.wait_tasks.clear()
+        self.peace_requests.clear()
         self.undo_requests.clear()
         self.undo_stats.clear()
         self._save_rankings()
+        logger.info("五子棋插件已卸载，所有状态和任务已清理")
