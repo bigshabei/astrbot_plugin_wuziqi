@@ -16,7 +16,7 @@ import asyncio
 import platform
 
 
-@register("astrbot_plugin_wuziqi", "大沙北/DITF16(改)", "简易五子棋游戏（全局匹配重构版）", "2.0.0",
+@register("astrbot_plugin_wuziqi", "大沙北/DITF16(改)", "五子棋游戏（全局匹配重构版）", "2.0.0",
           "https://github.com/bigshabei/astrbot_plugin_wuziqi")
 class WuziqiPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig = None):

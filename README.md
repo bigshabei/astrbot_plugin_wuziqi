@@ -1,10 +1,10 @@
-# AstrBot 插件 - 简易五子棋游戏（全局匹配重构版）
+# AstrBot 插件 - 五子棋游戏（全局匹配重构版）
 
 **插件名称**: astrbot_plugin_wuziqi  
 **版本**: 2.0.0  
 **作者**: 大沙北/DITF16(改)  
-**原仓库地址**: [五子棋游戏](https://github.com/bigshabei/astrbot_plugin_wuziqi.git)  
-**重构版仓库地址**: [全局匹配重构版五子棋](https://github.com/DITF16/astrbot_plugin_wuziqi.git) 
+**原仓库地址**: [五子棋游戏](https://github.com/bigshabei/astrbot_plugin_wuziqi)  
+**重构版仓库地址**: [全局匹配重构版五子棋](https://github.com/DITF16/astrbot_plugin_wuziqi) 
 
 ## 用途
 
