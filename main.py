@@ -1,12 +1,10 @@
-import os
 import re
 import random
 import json
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+from typing import Dict, Optional, Tuple
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.message_components import Plain, Image
 from astrbot.api.event import MessageChain
 from astrbot.api.star import Context, Star, register, StarTools
@@ -786,5 +784,10 @@ class WuziqiPlugin(Star):
             if "timeout_task" in req: req["timeout_task"].cancel()
         for req in self.undo_requests.values():
             if "timeout_task" in req: req["timeout_task"].cancel()
+        self.games.clear()
+        self.wait_tasks.clear()
+        self.peace_requests.clear()
+        self.undo_requests.clear()
+        self.undo_stats.clear()
         self._save_rankings()
         logger.info("五子棋插件已卸载，所有游戏和任务已清理。")
