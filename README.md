@@ -1,11 +1,14 @@
-# AstrBot 插件 - 五子棋游戏
+# AstrBot 插件 - 简易五子棋游戏（全局匹配重构版）
 
 **插件名称**: astrbot_plugin_wuziqi  
-**版本**: 1.3.4  
-**作者**: 大沙北  
-**仓库地址**: [https://github.com/bigshabei/astrbot_plugin_wuziqi](https://github.com/bigshabei/astrbot_plugin_wuziqi)
+**版本**: 2.0.0  
+**作者**: DITF16（改）/大沙北(原)  
+**仓库地址**: [DITF16版五子棋](https://github.com/DITF16/astrbot_plugin_wuziqi.git)  
+**原仓库地址**: [原版五子棋](https://github.com/bigshabei/astrbot_plugin_wuziqi.git)
 
 ## 用途
+
+<h3 style="color:red">本仓库仅用作私用，如果想使用请向原作者申请！</h3>
 
 这是一个简易的五子棋游戏插件，适用于 AstrBot 平台。用户可以通过该插件在群聊或私聊中进行五子棋对战，支持玩家对战和人机对战，并提供排行榜功能记录战绩。
 

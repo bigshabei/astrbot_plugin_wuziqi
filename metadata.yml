@@ -1,5 +1,5 @@
 name: astrbot_plugin_wuziqi
-version: "1.3.4"
-author: "大沙北"
-description: "简易五子棋游戏，支持玩家对战和人机对战，包含排行榜功能。"
-repository: "https://github.com/bigshabei/astrbot_plugin_wuziqi"
+version: "2.0.0"
+author: "大沙北/DITF16（改）"
+description: "简易五子棋游戏（全局匹配重构版），支持玩家对战和人机对战，包含排行榜功能。"
+repository: "https://github.com/DITF16/astrbot_plugin_wuziqi"
