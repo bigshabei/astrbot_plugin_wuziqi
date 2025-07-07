@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.message_components import Plain, Image
+from astrbot.api.message_components import Plain, Image, At
 from astrbot.api.event import MessageChain
 from astrbot.api.star import Context, Star, register, StarTools
 from astrbot.api import logger
@@ -91,9 +91,7 @@ class WuziqiPlugin(Star):
             self.rankings[player2_id]["draws"] += 1
         self._save_rankings()
 
-    # endregion
 
-    # region 游戏核心逻辑 (无改动)
     def _init_board(self) -> np.ndarray:
         return np.zeros((self.board_size, self.board_size), dtype=int)
 
@@ -177,9 +175,7 @@ class WuziqiPlugin(Star):
         logger.info(f"AI Move for Game {game_id}: {best_move} with score {max_score}")
         return best_move
 
-    # endregion
 
-    # region 辅助函数
     def _draw_board(self, board: np.ndarray, last_move: Optional[Tuple[int, int]] = None,
                     game_id: str = "default") -> str:
         cell_size, margin = 40, 40
@@ -295,9 +291,7 @@ class WuziqiPlugin(Star):
                                                                                   asyncio.Future()).cancel()
         logger.info(f"游戏状态已清理, Game ID: {game_id}")
 
-    # endregion
 
-    # region 命令处理函数
     @filter.command("五子棋")
     async def start_game(self, event: AstrMessageEvent):
         sender_id = event.get_sender_id()
@@ -482,16 +476,18 @@ class WuziqiPlugin(Star):
         else:
             mover_context = event.unified_msg_origin
             opponent_context = opponent_data.get("context")
+            opponent_id = opponent_data['id']
 
             if mover_context == opponent_context:
                 msg_text = (f"玩家 {mover_data['name']} 落子于 {position_str.upper()}。\n"
                             f"现在轮到 {opponent_data['name']}。")
-                msg_components = [Plain(msg_text), Image.fromFileSystem(board_path)]
+                msg_components = [At(qq=opponent_id), Plain(f" {msg_text}"), Image.fromFileSystem(board_path)]
                 yield event.chain_result(msg_components)
             else:
                 if opponent_context:
                     msg_for_opponent = f"对手 ({mover_data['name']}) 落子于 {position_str.upper()}。轮到您落子。"
-                    opponent_msg_list = [Plain(msg_for_opponent), Image.fromFileSystem(board_path)]
+                    opponent_msg_list = [At(qq=opponent_id), Plain(f" {msg_for_opponent}"),
+                                         Image.fromFileSystem(board_path)]
                     await self.context.send_message(opponent_context, MessageChain(opponent_msg_list))
 
                 msg_for_mover = f"您落子于 {position_str.upper()}。等待对手 ({opponent_data['name']}) 回应。"
@@ -557,10 +553,12 @@ class WuziqiPlugin(Star):
 
         proposer_name = game['players'][proposer_num]['name']
         opponent_context = opponent_data.get("context")
+        opponent_id = opponent_data.get("id")
 
         msg_to_opponent = f"玩家 {proposer_name} 请求悔棋！请在{self.request_timeout_duration}秒内回复 '/接受悔棋' 或 '/拒绝悔棋'。"
         if opponent_context:
-            await self.context.send_message(opponent_context, MessageChain([Plain(msg_to_opponent)]))
+            await self.context.send_message(opponent_context,
+                                            MessageChain([At(qq=opponent_id), Plain(f" {msg_to_opponent}")]))
         yield event.plain_result(f"已向 {opponent_data['name']} 发送悔棋请求，请等待对方回应。")
         event.stop_event()
 
@@ -656,9 +654,11 @@ class WuziqiPlugin(Star):
                                         "timeout_task": asyncio.create_task(self._request_timeout(game_id, "peace"))}
         proposer_name = game['players'][proposer_num]['name']
         opponent_context = opponent_data.get("context")
+        opponent_id = opponent_data.get("id")
         msg_to_opponent = f"玩家 {proposer_name} 请求和棋！请在{self.request_timeout_duration}秒内回复 '/接受求和' 或 '/拒绝求和'。"
         if opponent_context:
-            await self.context.send_message(opponent_context, MessageChain([Plain(msg_to_opponent)]))
+            await self.context.send_message(opponent_context,
+                                            MessageChain([At(qq=opponent_id), Plain(f" {msg_to_opponent}")]))
         yield event.plain_result(f"已向 {opponent_data['name']} 发送求和请求，请等待对方回应。")
         event.stop_event()
 
@@ -727,19 +727,16 @@ class WuziqiPlugin(Star):
         sender_id = event.get_sender_id()
         game = self._get_game_by_player(sender_id)
 
-        # 1. 检查玩家是否在对局中
         if not game:
             yield event.plain_result("您当前不在任何对局中。")
             event.stop_event()
             return
 
-        # 2. 只有正在进行中的游戏才能被结束
         if game["status"] != "active":
             yield event.plain_result("当前没有正在进行的对局可供结束。")
             event.stop_event()
             return
 
-        # 3. 核心逻辑：检查对局是否为人机对战
         is_ai_game = game['players'][1].get('is_ai', False) or \
                      game['players'][2].get('is_ai', False)
 
@@ -748,26 +745,19 @@ class WuziqiPlugin(Star):
             event.stop_event()
             return
 
-        # 4. 如果是人机对局，则允许结束
         game_id = game['id']
 
-        # 清理游戏状态
         self._cleanup_game_state(game_id)
 
-        # 只需向发起命令的玩家发送确认消息
         yield event.plain_result("您与AI的对局已结束。")
         event.stop_event()
 
-    # endregion
-
-    # region 其他指令
     @filter.command("五子棋帮助")
     async def show_help(self, event: AstrMessageEvent):
         yield event.plain_result(
             "🎲 五子棋游戏帮助（完整功能版） 🎲\n\n"
             "【核心指令】\n"
             "- /五子棋: 创建新游戏，获取游戏ID。\n"
-            "- /取消五子棋: 取消由你发起且未开始的游戏。\n"
             "- /加入五子棋 <ID>: 输入ID加入游戏。\n"
             "- /人机对战: 直接开始或加入人机对战。\n"
             "- 落子 <坐标> 或直接发坐标(如H7): 落子。\n\n"
@@ -811,7 +801,6 @@ class WuziqiPlugin(Star):
             f"您的五子棋战绩 [{data['name']}]：\n胜：{wins} | 负：{losses} | 平：{draws}\n总对局：{total} | 胜率：{win_rate:.2f}%")
         event.stop_event()
 
-    # endregion
 
     async def terminate(self):
         for task in self.wait_tasks.values(): task.cancel()
