@@ -480,26 +480,23 @@ class WuziqiPlugin(Star):
                 msg += f"\n轮到您 ({game['players'][game['current_player']]['name']}) 落子。"
                 yield event.chain_result([Plain(msg), Image.fromFileSystem(board_path)])
         else:
-            msg_for_mover = f"您落子于 {position_str.upper()}。等待对手 ({opponent_data['name']}) 回应。"
-            msg_for_opponent = f"对手 ({mover_data['name']}) 落子于 {position_str.upper()}。轮到您落子。"
-            async for res in self._broadcast_turn_message(game, msg_for_mover, msg_for_opponent, board_path,
-                                                          event): yield res
+            mover_context = event.unified_msg_origin
+            opponent_context = opponent_data.get("context")
 
-    async def _broadcast_turn_message(self, game: dict, msg_for_mover: str, msg_for_opponent: str, board_path: str,
-                                      event: AstrMessageEvent):
-        """向对局双方广播定制的回合信息"""
-        mover_context = event.unified_msg_origin
-        opponent_player = game["players"][game["current_player"]]
-        opponent_context = opponent_player.get("context")
-        mover_msg_list = [Plain(msg_for_mover), Image.fromFileSystem(board_path)]
-        opponent_msg_list = [Plain(msg_for_opponent), Image.fromFileSystem(board_path)]
+            if mover_context == opponent_context:
+                msg_text = (f"玩家 {mover_data['name']} 落子于 {position_str.upper()}。\n"
+                            f"现在轮到 {opponent_data['name']}。")
+                msg_components = [Plain(msg_text), Image.fromFileSystem(board_path)]
+                yield event.chain_result(msg_components)
+            else:
+                if opponent_context:
+                    msg_for_opponent = f"对手 ({mover_data['name']}) 落子于 {position_str.upper()}。轮到您落子。"
+                    opponent_msg_list = [Plain(msg_for_opponent), Image.fromFileSystem(board_path)]
+                    await self.context.send_message(opponent_context, MessageChain(opponent_msg_list))
 
-        if mover_context == opponent_context:
-            yield event.chain_result(opponent_msg_list)
-        else:
-            if opponent_context:
-                await self.context.send_message(opponent_context, MessageChain(opponent_msg_list))
-            yield event.chain_result(mover_msg_list)
+                msg_for_mover = f"您落子于 {position_str.upper()}。等待对手 ({opponent_data['name']}) 回应。"
+                mover_msg_list = [Plain(msg_for_mover), Image.fromFileSystem(board_path)]
+                yield event.chain_result(mover_msg_list)
 
     async def _broadcast_final_message(self, game: dict, msg: str, board_path: Optional[str]):
         """向对局双方广播相同的最终消息"""
@@ -552,7 +549,6 @@ class WuziqiPlugin(Star):
             event.stop_event()
             return
 
-        # FIXED: 将 proposer_player_num 添加到请求中
         self.undo_requests[game_id] = {
             "proposer": sender_id,
             "proposer_player_num": proposer_num,
@@ -713,7 +709,6 @@ class WuziqiPlugin(Star):
             return
         loser_num = 1 if game["players"][1]["id"] == sender_id else 2
 
-        # FIXED: 修正 NameError
         winner_num = 3 - loser_num
         loser = game["players"][loser_num]
         winner = game["players"][winner_num]
@@ -722,6 +717,45 @@ class WuziqiPlugin(Star):
         await self._broadcast_final_message(game, msg, None)
         self._update_rankings(winner['id'], winner['name'], loser['id'], loser['name'])
         self._cleanup_game_state(game['id'])
+        event.stop_event()
+
+    @filter.command("结束下棋")
+    async def end_game(self, event: AstrMessageEvent):
+        """
+        允许玩家主动结束一个正在进行的【人机对局】，不计入战绩。
+        """
+        sender_id = event.get_sender_id()
+        game = self._get_game_by_player(sender_id)
+
+        # 1. 检查玩家是否在对局中
+        if not game:
+            yield event.plain_result("您当前不在任何对局中。")
+            event.stop_event()
+            return
+
+        # 2. 只有正在进行中的游戏才能被结束
+        if game["status"] != "active":
+            yield event.plain_result("当前没有正在进行的对局可供结束。")
+            event.stop_event()
+            return
+
+        # 3. 核心逻辑：检查对局是否为人机对战
+        is_ai_game = game['players'][1].get('is_ai', False) or \
+                     game['players'][2].get('is_ai', False)
+
+        if not is_ai_game:
+            yield event.plain_result("玩家对战中无法使用此命令，请使用 /认输 或与对方协商 /求和。")
+            event.stop_event()
+            return
+
+        # 4. 如果是人机对局，则允许结束
+        game_id = game['id']
+
+        # 清理游戏状态
+        self._cleanup_game_state(game_id)
+
+        # 只需向发起命令的玩家发送确认消息
+        yield event.plain_result("您与AI的对局已结束。")
         event.stop_event()
 
     # endregion
@@ -733,6 +767,7 @@ class WuziqiPlugin(Star):
             "🎲 五子棋游戏帮助（完整功能版） 🎲\n\n"
             "【核心指令】\n"
             "- /五子棋: 创建新游戏，获取游戏ID。\n"
+            "- /取消五子棋: 取消由你发起且未开始的游戏。\n"
             "- /加入五子棋 <ID>: 输入ID加入游戏。\n"
             "- /人机对战: 直接开始或加入人机对战。\n"
             "- 落子 <坐标> 或直接发坐标(如H7): 落子。\n\n"
@@ -741,10 +776,10 @@ class WuziqiPlugin(Star):
             "- /悔棋, /接受悔棋, /拒绝悔棋\n"
             "- /求和, /接受求和, /拒绝求和\n"
             "- /认输: 结束游戏并判负。\n"
-            "- /结束下棋: 放弃对局（无胜负记录）。\n\n"
+            "- /结束下棋: [仅限人机对战] 放弃对局（无胜负记录）。\n\n"
             "【其他】\n"
-            "- /我的战绩 & /五子棋排行榜: 查询战绩。\n"
-            "- /强制结束游戏 <ID>: [管理员]强制结束游戏。"
+            "- /我的战绩: 查询战绩。\n"
+            "- /五子棋排行榜: 查看排行榜"
         )
         event.stop_event()
 
