@@ -3,7 +3,7 @@ import random
 import json
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List  # <-- 1. 导入 List
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.message_components import Plain, Image, At
 from astrbot.api.event import MessageChain
@@ -23,8 +23,10 @@ class WuziqiPlugin(Star):
         super().__init__(context)
         self.games: Dict[str, dict] = {}
         self.player_to_game: Dict[str, str] = {}
+        # 新增游戏大厅列表
+        self.lobby: List[Dict[str, str]] = []
         self.board_size = config.get('board_size', 15) if config else 15
-        self.join_timeout = config.get('join_timeout', 120) if config else 120
+        self.join_timeout = config.get('join_timeout', 300) if config else 300
         self.request_timeout_duration = 30  # 悔棋/求和请求的超时时间
         self.backup_interval = config.get('backup_interval', 3600) if config else 3600
         self.data_path = StarTools.get_data_dir("astrbot_plugin_wuziqi")
@@ -283,6 +285,10 @@ class WuziqiPlugin(Star):
                 player_info = game["players"].get(player_num)
                 if player_info and player_info["id"] in self.player_to_game:
                     del self.player_to_game[player_info["id"]]
+
+        # 从大厅移除对局的核心逻辑
+        self.lobby = [g for g in self.lobby if g.get('game_id') != game_id]
+
         if game_id in self.undo_stats: del self.undo_stats[game_id]
         if game_id in self.wait_tasks: self.wait_tasks.pop(game_id).cancel()
         if game_id in self.peace_requests: self.peace_requests.pop(game_id, {}).get("timeout_task",
@@ -295,23 +301,33 @@ class WuziqiPlugin(Star):
     @filter.command("五子棋")
     async def start_game(self, event: AstrMessageEvent):
         sender_id = event.get_sender_id()
+        sender_name = event.get_sender_name()
         if self._get_game_by_player(sender_id):
             yield event.plain_result("您已在游戏中，请先完成或结束对局。");
             return
         game_id = self._generate_game_id()
         self.player_to_game[sender_id] = game_id
-        player1_info = {"id": sender_id, "name": event.get_sender_name(), "context": event.unified_msg_origin}
+        player1_info = {"id": sender_id, "name": sender_name, "context": event.unified_msg_origin}
         self.games[game_id] = {
             "id": game_id, "board": self._init_board(), "current_player": 1, "last_move": None,
             "players": {1: player1_info, 2: None}, "history": [], "status": "pending"
         }
+
+        # 将新创建的游戏加入大厅
+        self.lobby.append({
+            "creator_id": sender_id,
+            "creator_name": sender_name,
+            "game_id": game_id
+        })
+
         self.undo_stats[game_id] = {}
         task = asyncio.create_task(self._wait_for_join_timeout(game_id))
         self.wait_tasks[game_id] = task
-        logger.info(f"新游戏创建, ID: {game_id}, 发起者: {event.get_sender_name()}({sender_id})")
+        logger.info(f"新游戏创建, ID: {game_id}, 发起者: {sender_name}({sender_id})")
         yield event.plain_result(
             f"五子棋游戏已创建！游戏ID是【{game_id}】。\n"
-            f"让朋友使用 '/加入五子棋 {game_id}' 加入，或您使用 '/人机对战' 与AI开始。\n"
+            f"让朋友使用 '/加入五子棋 {game_id}' 加入，或使用 '/人机对战' 与AI开始。\n"
+            f"其他玩家现在可以通过 '/游戏大厅' 看到你的对局邀请。\n"
             f"邀请在 {self.join_timeout} 秒后失效。"
         )
         event.stop_event()
@@ -333,6 +349,11 @@ class WuziqiPlugin(Star):
         game = self.games.get(game_id)
         if not game or game["status"] != "pending": yield event.plain_result(f"游戏【{game_id}】不可加入。"); return
         if game["players"][1]["id"] == sender_id: yield event.plain_result("不能加入自己的游戏。"); return
+
+        # 因为游戏即将开始，状态会变为 active，所以在此处清理大厅信息
+        # _cleanup_game_state 会处理所有清理工作，包括大厅
+        self.lobby = [g for g in self.lobby if g.get('game_id') != game_id]
+
         if game_id in self.wait_tasks: self.wait_tasks.pop(game_id).cancel()
         game["players"][2] = {"id": sender_id, "name": event.get_sender_name(), "context": event.unified_msg_origin}
         game["status"] = "active"
@@ -354,6 +375,7 @@ class WuziqiPlugin(Star):
         sender_id = event.get_sender_id()
         game = self._get_game_by_player(sender_id)
         if not game:
+            # 直接创建人机对战，不经过大厅
             game_id = self._generate_game_id()
             self.player_to_game[sender_id] = game_id
             p1_info = {"id": sender_id, "name": event.get_sender_name(), "context": event.unified_msg_origin}
@@ -367,6 +389,8 @@ class WuziqiPlugin(Star):
             yield event.image_result(self._draw_board(self.games[game_id]["board"], game_id=game_id))
             return
         if game["status"] == "pending" and game["players"][1]["id"] == sender_id:
+            # 从等待状态转为人机，需要清理大厅
+            self.lobby = [g for g in self.lobby if g.get('game_id') != game['id']]
             if game["id"] in self.wait_tasks: self.wait_tasks.pop(game["id"]).cancel()
             game["players"][2] = {"id": "AI", "name": "AI 玩家", "is_ai": True, "context": None}
             game["status"] = "active"
@@ -655,6 +679,7 @@ class WuziqiPlugin(Star):
         proposer_name = game['players'][proposer_num]['name']
         opponent_context = opponent_data.get("context")
         opponent_id = opponent_data.get("id")
+
         msg_to_opponent = f"玩家 {proposer_name} 请求和棋！请在{self.request_timeout_duration}秒内回复 '/接受求和' 或 '/拒绝求和'。"
         if opponent_context:
             await self.context.send_message(opponent_context,
@@ -752,15 +777,38 @@ class WuziqiPlugin(Star):
         yield event.plain_result("您与AI的对局已结束。")
         event.stop_event()
 
+    # 新增 游戏大厅 命令
+    @filter.command("游戏大厅")
+    async def show_lobby(self, event: AstrMessageEvent):
+        """显示所有等待加入的游戏"""
+        if not self.lobby:
+            yield event.plain_result("当前游戏大厅空空如也，快来使用 /五子棋 创建一局游戏吧！")
+            return
+
+        msg_parts = ["- 开放中的五子棋对局 -\n"]
+        for game_info in self.lobby:
+            part = (
+                f"▶ 玩家: {game_info['creator_name']} ({game_info['creator_id']})\n"
+                f"  游戏ID: {game_info['game_id']}\n"
+            )
+            msg_parts.append(part)
+
+        final_msg = "\n".join(msg_parts)
+        yield event.plain_result(final_msg)
+        event.stop_event()
+
+
     @filter.command("五子棋帮助")
     async def show_help(self, event: AstrMessageEvent):
         yield event.plain_result(
             "🎲 五子棋游戏帮助（完整功能版） 🎲\n\n"
             "【核心指令】\n"
-            "- /五子棋: 创建新游戏，获取游戏ID。\n"
+            "- /五子棋: 创建新游戏，并发布到游戏大厅。\n"
+            "- /取消五子棋: 游戏未开始时，发起者可取消游戏。\n"
+            "- /游戏大厅: 查看所有等待中的游戏。\n"
             "- /加入五子棋 <ID>: 输入ID加入游戏。\n"
             "- /人机对战: 直接开始或加入人机对战。\n"
-            "- 落子 <坐标> 或直接发坐标(如H7): 落子。\n\n"
+            "- 直接发坐标(如H7): 在指定位置落子。\n\n"
             "【游戏内指令】\n"
             "- /查看棋局: 查看当前棋盘。\n"
             "- /悔棋, /接受悔棋, /拒绝悔棋\n"
@@ -813,5 +861,6 @@ class WuziqiPlugin(Star):
         self.peace_requests.clear()
         self.undo_requests.clear()
         self.undo_stats.clear()
+        self.lobby.clear()  # 清理大厅
         self._save_rankings()
         logger.info("五子棋插件已卸载，所有游戏和任务已清理。")
